@@ -1,0 +1,113 @@
+// Talk to Your Data — voice-powered prediction analyst (Breaking Bugs,
+// AssemblyAI Voice Agent Hackathon).
+//
+// Understands a business question about the insurance dataset, inspects it,
+// fits a regression model, explains what drives the outcome, and predicts a
+// charge for a hypothetical case — by voice, in plain business language.
+//
+// The three tools below are answered by the analysis-engine service (Person
+// B's FastAPI app). BASE_URL is that service's public tunnel URL for local
+// dev (ngrok/cloudflared) — set it in .env, see README notes at the bottom
+// of this repo checkout. Contract for what each tool takes and returns lives
+// in the team's project doc ("The tool contract — build against this,
+// separately").
+//
+// https://www.assemblyai.com/docs/voice-agents/voice-agent-api/tools/http-tools
+{
+  "name": "Talk to Your Data",
+
+  // Voice-first: short spoken sentences, no lists or tables read aloud, no
+  // exclamation marks. Encodes the demo script's rules directly: mandatory
+  // get_dataset_context first, required vs optional predict fields, the
+  // exact reliability wording, and "state the assumption" for any impact
+  // claim beyond a single prediction.
+  // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/prompting-guide
+  "system_prompt": "You are a voice-based data consultant helping someone understand and predict insurance charges from a dataset you have access to. At the start of a conversation, call get_dataset_context once before saying anything about the data, so you know the real columns and the required prediction inputs rather than guessing. When asked what drives costs, which factors matter, or how accurate predictions tend to be, call run_analysis if you have not already done so this conversation, then answer from what it returns: name the top few drivers in plain terms, leading with the strongest one. When asked to predict a charge for someone, you need their age, BMI, and smoker status before you call predict; if any of those three is missing, ask for it specifically rather than guessing or calling predict without it. Sex, number of children, and region are optional: if the caller did not mention one, leave it out of the call, and predict will fill a sensible default; when it tells you what it assumed, mention that briefly so the caller knows. When asked how confident or how reliable an estimate is, state the reliability sentence predict or run_analysis returns exactly as given; never invent your own accuracy claim, and never call it a confidence interval unless the tool result explicitly gives you a calibrated range. If asked to explain something like a business manager, drop model terms entirely and describe what matters, what the estimate is, and how much it could be off by, in plain sentences a non-technical person would use. If you ever state that something would save or cost the business money beyond a single prediction, say the assumption behind that number in the same breath, never as a bare fact. All amounts are in US dollars. Keep replies to two or three short spoken sentences unless walking through several drivers one at a time. No exclamation marks.",
+
+  "greeting": "Hi, I'm your data consultant. Ask me what's driving your insurance costs, or describe someone and I'll estimate their charges.",
+
+  // Catalog: https://www.assemblyai.com/docs/voice-agents/voice-agent-api/voices
+  "voice": { "voice_id": "anna" },
+
+  // Claude through the AssemblyAI gateway — one key, one bill, no separate
+  // LLM credential to manage during the hackathon.
+  // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/connect-your-own-llm
+  "llm": [],
+
+  "input": {
+    // Domain vocabulary the transcriber would otherwise guess at.
+    // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/transcription-prompt
+    "keyterms": [
+      "BMI",
+      "body mass index",
+      "smoker",
+      "non-smoker",
+      "premium",
+      "deductible",
+      "northeast",
+      "northwest",
+      "southeast",
+      "southwest",
+      "insurance charges"
+    ],
+    // Slightly more patient than the default: callers pause mid-sentence
+    // while working out a hypothetical case's numbers.
+    // https://www.assemblyai.com/docs/voice-agents/voice-agent-api/turn-detection-and-interruptions
+    "turn_detection": {
+      "min_silence": 900,
+      "max_silence": 3000,
+      "interrupt_response": true
+    }
+  },
+
+  "tools": [
+    {
+      "name": "get_dataset_context",
+      "description": "Describe the loaded dataset: its columns, the prediction target, and which inputs are required vs optional for a prediction. Call this once at the start of a conversation, before naming any driver or asking for prediction inputs, so you are grounded in the real schema rather than guessing.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution_mode": "interactive",
+      "timeout_seconds": 10,
+      "http": {
+        "url": "${BASE_URL}/tools/get_dataset_context",
+        "http_method": "POST"
+      }
+    },
+    {
+      "name": "run_analysis",
+      "description": "Fit and evaluate the regression model on the loaded dataset, returning the top drivers of the outcome and how accurate the model is on held-out data. Call this before answering any question about what drives costs, which factors matter, or how accurate predictions are, unless you have already called it earlier in this conversation.",
+      "parameters": { "type": "object", "properties": {}, "required": [] },
+      "execution_mode": "interactive",
+      "timeout_seconds": 30,
+      "http": {
+        "url": "${BASE_URL}/tools/run_analysis",
+        "http_method": "POST"
+      }
+    },
+    {
+      "name": "predict",
+      "description": "Estimate the insurance charge for a specific hypothetical case. age, bmi, and smoker are required: if the caller has not given you one of these, ask for it before calling this tool rather than guessing. sex, children, and region are optional; leave a field out if it was not mentioned, and the tool will fill a sensible default and report what it assumed.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "age": { "type": "number", "description": "Age in years." },
+          "bmi": { "type": "number", "description": "Body mass index." },
+          "smoker": { "type": "string", "enum": ["yes", "no"], "description": "Whether this person smokes." },
+          "sex": { "type": "string", "enum": ["male", "female"], "description": "Optional." },
+          "children": { "type": "integer", "description": "Optional. Number of dependents." },
+          "region": {
+            "type": "string",
+            "enum": ["northeast", "northwest", "southeast", "southwest"],
+            "description": "Optional. US region."
+          }
+        },
+        "required": ["age", "bmi", "smoker"]
+      },
+      "execution_mode": "interactive",
+      "timeout_seconds": 10,
+      "http": {
+        "url": "${BASE_URL}/tools/predict",
+        "http_method": "POST"
+      }
+    }
+  ]
+}
